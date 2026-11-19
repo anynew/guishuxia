@@ -55221,9 +55221,15 @@ function createKit(scene, roofs) {
         const tree=HOME_LAYOUT.tree;
         wear=`vec2 fromTree=(hometownWorld.xz-vec2(${tree.x.toFixed(3)},${tree.z.toFixed(3)}))/vec2(2.0,2.35);
           float underTree=exp(-dot(fromTree,fromTree)*.72);
-          float moss=underTree*smoothstep(.19,.67,homeWeathering);
+          float joint=1.-smoothstep(.28,.62,texture2D(bumpMap,homeSurfaceUV()).r);
+          vec2 ground=hometownWorld.xz;
+          float islands=texture2D(homeWeather,ground*.57+vec2(.18,.67)).r;
+          float wornRoute=1.-smoothstep(.14,.75,abs(ground.y-(.5-.22*ground.x)));
+          float moss=underTree*(.16+.84*joint)*smoothstep(.30,.67,islands)*(.92-.63*wornRoute);
+          float wearBand=wornRoute*(.3+.7*islands);
+          diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.235,.224,.199),.15*wearBand);
           diffuseColor.rgb*=mix(vec3(1.),vec3(.63,.79,.55),moss*.73);
-          diffuseColor.rgb*=1.-.11*underTree;`;
+          diffuseColor.rgb*=1.-underTree*(.08+.13*islands);`;
       }else if(label==='brick-lane'){
         wear=`vec2 ground=hometownWorld.xz;
           float grit=texture2D(homeWeather,ground*2.14).r;
@@ -55256,7 +55262,18 @@ function createKit(scene, roofs) {
           float damp=1.-smoothstep(dirtLine-.17,dirtLine+.16,y);
           float aggregate=smoothstep(.43,.76,wash*.42+homeWeathering*.40+grain*.18);
           diffuseColor.rgb*=mix(vec3(1.),vec3(.68,.71,.65),damp*.74+aggregate*.30);
-          diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.46,.44,.36),aggregate*(.08+.24*damp));`;
+          diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.43,.439,.402),aggregate*(.07+.23*damp));
+          // Runoff starts at the actual ends of the west-house sills.
+          if(abs(hometownWorld.x)<.115 && hometownNormal.x>.7 && y<1.09){
+            float z=hometownWorld.z+(wash-.5)*.036;
+            vec4 windows=vec4(-2.57,-.54,1.73,3.18);
+            vec4 ends=abs(abs(z-windows)-vec4(.63,.225,.21,.725));
+            float edge=min(min(ends.x,ends.y),min(ends.z,ends.w));
+            float below=clamp(1.07-y,0.,1.);
+            float run=(1.-smoothstep(.008,.032+below*.05,edge))*
+              smoothstep(.0,.07,below)*(1.-smoothstep(.26,.84,below));
+            diffuseColor.rgb*=1.-.19*run*(.47+.53*wash);
+          }`;
       }else if(label==='entry-lime'){
         // 00:10 looking out and 00:26 looking in: old limewash survives above
         // an uneven tide mark. Exposed sandy render and salts follow the foot.
@@ -55384,7 +55401,7 @@ function createKit(scene, roofs) {
         const kiln=grainRandom(),exposure=grainRandom()-.5;
         // Dust and wear bring the tones of neighbouring paving bricks together.
         const rgb=courtyard
-          ?[105+kiln*13+exposure*9,101+kiln*8+exposure*9,83+kiln*6+exposure*8]
+          ?[108+kiln*15+exposure*9,104+kiln*12+exposure*9,95+kiln*10+exposure*8]
           :[125+kiln*33+exposure*13,82+kiln*24+exposure*15,62+kiln*19+exposure*15];
         course.push({edge:(grainRandom()-.5)*.20,tilt:grainRandom()-.5,rgb});
       }
@@ -55597,7 +55614,7 @@ function createKit(scene, roofs) {
     const bumpScale=exposed?.0015:soil?.008:lime?.0012:.0025;
     return worldMap(mat(0xffffff,{map:body.finish(),bumpMap:height.finish(),bumpScale,roughness:soil?.99:.93}),tileWidth,tileWidth,kind,exposed?.21:lime?.065:soil?.49:.22);
   }
-  const plaster=mineralFinish('roughcast',768,.91,[173,174,164]);
+  const plaster=mineralFinish('roughcast',768,.91,[175,177,172]);
   const concrete=mineralFinish('cement',512,1.53,[148,147,137]);
   const lime=mineralFinish('lime',256,1.31,[206,204,194]);
   const earth=mineralFinish('earth',512,1.12,[111,99,78]);
@@ -55723,7 +55740,17 @@ async function buildArchitecture(K) {
   M.worldMap(gateRender,1.12,1.12,'gate-render',.26);
   const rusty = mat('#6c4537', { roughness: .8 });
   const doorMat = mat('#6d362b', { roughness: .72 });
-  const darkGlass = mat('#768b89', { roughness: .27, metalness: .25, transparent: true, opacity: .18 });
+  const darkGlass = mat('#a4b4ac',{roughness:.19,metalness:0,transparent:true,opacity:.10,depthWrite:false});
+  // Reflections dominate at a grazing angle, while the room remains visible face-on.
+  darkGlass.onBeforeCompile=shader=>{
+    shader.fragmentShader=shader.fragmentShader.replace('#include <opaque_fragment>',`
+      float incidence=clamp(abs(dot(normal,normalize(vViewPosition))),0.,1.);
+      float grazing=pow(1.-incidence,4.);
+      diffuseColor.a=.075+.55*grazing;
+      outgoingLight+=reflectedLight.indirectSpecular*(3.2+1.8*grazing);
+      #include <opaque_fragment>`);
+  };
+  K.windowGlass=darkGlass;
   const doorGreen = mat('#285548', { roughness: .68, metalness: .32 });
   const pipeMat = mat('#8c9286', { metalness: .58, roughness: .43 });
   const brickEdge = mat('#857660', { roughness: 1 });
@@ -55845,8 +55872,34 @@ async function buildArchitecture(K) {
   // Dimensions remain estimates. This contract is also consumed by the walking controller.
   const stair=K.stair={xMin:flightWest,xMax:flightWest+stairFlightWidth,startZ:-1.25,endZ:-4.70,baseY:.12,topY:3.2,landingMinZ:-5.20,landingMaxZ:-4.70,landingMinX:.5,landingMaxX:kitchen.west+.09,upperStepMinX:.14,upperStepMaxX:.60,upperStepY:3.45,steps:16};
 
+  // Keep straight cast faces but round the small exposed arrises in physical metres.
+  const easedBlocks=new Map();
+  function easedBlock(w,h,d,radius){
+    const key=[w,h,d,radius].join('/');
+    if(easedBlocks.has(key))return easedBlocks.get(key);
+    const shape=new T.BoxGeometry(1,1,1,3,3,3);
+    const {position,normal,uv}=shape.attributes,dim=[w,h,d];
+    for(let i=0;i<position.count;i++){
+      const unit=[position.getX(i),position.getY(i),position.getZ(i)];
+      const oldFace=[normal.getX(i),normal.getY(i),normal.getZ(i)];
+      const direction=unit.map(q=>Math.abs(q)>.49?Math.sign(q):0);
+      const length=Math.hypot(...direction);
+      const xyz=unit.map((q,k)=>Math.sign(q)*(.5-radius/dim[k])+radius*direction[k]/(length*dim[k]));
+      position.setXYZ(i,...xyz);
+      normal.setXYZ(i,...direction.map((v,k)=>v*dim[k]/length));
+      // Project the shortened flat face in the same orientation as BoxGeometry.
+      const [x,y,z]=xyz,[nx,ny,nz]=oldFace;
+      uv.setXY(i,.5+(nx?-nx*z:ny?x:nz*x),.5+(ny?-ny*z:y));
+    }
+    easedBlocks.set(key,shape);return shape;
+  }
   function block(w,h,d,m,x,y,z,parent=scene,solid=false) {
     const mesh = box(w,h,d,m,x,y,z,parent);
+    const stone=(m===concrete||m===M.wornStone)&&h<=.28&&Math.min(w,d)>.12;
+    if(stone||m===frameMat){
+      const radius=Math.min(stone?.011:.0024,Math.min(w,h,d)*.18);
+      if(radius>.0004)mesh.geometry=easedBlock(w,h,d,radius);
+    }
     if(m===doorMat||m===rusty||m===doorGreen||m===screenPaint){
       const tile=m===doorMat||m===rusty?10:11;
       const axis=w>d?'X':'Z',horizontal=Math.max(w,d)>h;
@@ -58955,7 +59008,7 @@ async function buildLandscape(K) {
   }
   function canopyRadius(y,angle){
     const dome=y>2.48?Math.sqrt(Math.max(.0004,1-((y-2.48)/1.62)**2)):.90+.10*(y-1.23)/1.25;
-    return 1.53*dome*(1+.032*Math.cos(angle*3+.4)+.026*Math.sin(angle*5+.6*y));
+    return 1.53*dome*(1+.067*Math.cos(angle*3+.4*y)+.049*Math.sin(angle*5+.6*y)+.031*Math.sin(angle*7-1.7*y));
   }
   function joinSpray(anchor,angle,rise){
     let near=secondary[0],best=Infinity;
@@ -59119,7 +59172,8 @@ async function buildLandscape(K) {
         dummy.position.copy(base).addScaledVector(outVec,size*.52);
         dummy.quaternion.setFromRotationMatrix(basis);dummy.scale.set(size*range(.84,1.13),size,size);
         dummy.updateMatrix();leaves.setMatrixAt(li,dummy.matrix);
-        const light=.68+.12*(base.y-1.2)/2.8+range(-.048,.075)+(sprig.fresh&&j>3?.07:0);
+        const shell=Math.min(1,Math.hypot(base.x-.04,base.z-.03)/Math.max(.12,canopyRadius(base.y,angle)));
+        const light=.55+.15*(base.y-1.2)/2.8+.11*shell+range(-.056,.073)+(sprig.fresh&&j>3?.065:0);
         color.setHSL(sprig.fresh?.2:.27,sprig.fresh?.12:.065,light);
         leaves.setColorAt(li++,color);
       }
@@ -61966,7 +62020,8 @@ function bakeHomeSkyVisibility(K,roofs){
         float skyRegion=(1.-smoothstep(.84,1.00,max(away.x,away.z)))*(1.-smoothstep(.94,1.01,homeSkyProbe.y));
         if(skyRegion*homeSkyActive>.001){
           float skyVisibility=texture(homeSkyVolume,clamp(homeSkyProbe,vec3(.001),vec3(.999))).r;
-          float homeBounce=mix(1.,.34+.66*sqrt(skyVisibility),skyRegion);
+          // Recesses see bounced light while the jambs still see a large area of sky.
+          float homeBounce=mix(1.,.265+.735*pow(skyVisibility,.67),skyRegion);
           reflectedLight.indirectDiffuse*=homeBounce;
           reflectedLight.indirectSpecular*=mix(1.,homeBounce,.67);
           // Daylight in the windowless store arrives through its inner door.
@@ -62286,8 +62341,8 @@ function courtyardMusic(button,volume,notify){
     await progress(80,'让阳光走进房间');
     buildCourtyardDog(K);
     // Weak window-side bounce makes the transition from the yard to the back rooms legible.
-    for(const [x,y,z,power] of [[-.75,1.78,.55,2.3],[-4.7,1.95,.32,1.3],[-2.2,1.8,-4.15,2.0],[-1.2,1.85,3.75,1.9],[4.98,2.10,-3.53,6.2]]) {
-      const bounce=new T.PointLight('#ede7d8',power,7,2);bounce.position.set(x,y,z);scene.add(bounce);
+    for(const [x,y,z,power] of [[-.90,2.02,.55,2.65],[-4.7,2.15,.32,.95],[-1.38,2.08,-2.57,2.35],[-1.12,2.05,3.18,2.0],[4.52,2.16,-2.25,4.9]]) {
+      const bounce=new T.PointLight('#e4e9e6',power,7,2);bounce.position.set(x,y,z);scene.add(bounce);
     }
     // Soft contact shade is generated from the physical footprints, without image assets.
     for(const [x0,z0,w,d,y] of [[P.main.west,P.main.north,-P.main.west,P.main.south-P.main.north,.122],...[P.kitchen,P.entry].map(r=>[r.west,r.north,r.east-r.west,r.south-r.north,.122]),[P.yard.west,P.yard.north,P.yard.east-P.yard.west,P.yard.south-P.yard.north,.007]]){
@@ -62709,7 +62764,7 @@ function courtyardMusic(button,volume,notify){
     const music=courtyardMusic($('musicBtn'),$('musicVolume'),toast);
     let hour=8, directionOfTime=1, shadowTime=-1, hintTime=-1, sunTime=-1;
     function daylight(){const phase=(hour-6)*Math.PI/12,alt=Math.sin(phase);sun.position.set(25*Math.cos(phase),5+17*alt,4+8*alt);
-      skyMaterial.uniforms.sunDirection.value.copy(sun.position).normalize();const warm=$('atmosphere').value==='warm';sun.color.set(warm?'#ffcc98':'#e8ebeb').lerp(new T.Color(warm?'#fff0d9':'#f6f6ee'),alt*.83);sun.intensity=warm?2.25+.75*alt:.49+.14*alt;
+      skyMaterial.uniforms.sunDirection.value.copy(sun.position).normalize();const warm=$('atmosphere').value==='warm';sun.color.set(warm?'#ffd5af':'#e8ebeb').lerp(new T.Color(warm?'#fff8e9':'#f6f6ee'),alt*.94);sun.intensity=warm?1.82+.76*alt:.46+.13*alt;
       const minutes=Math.round(hour*60);$('clockTime').textContent=String(Math.floor(minutes/60)).padStart(2,'0')+':'+String(minutes%60).padStart(2,'0');$('dayHour').value=hour;}
     $('dayHour').oninput=()=>{hour=Number($('dayHour').value);daylight();K.invalidateShadow();};
     function setDaylight(){
@@ -62717,12 +62772,28 @@ function courtyardMusic(button,volume,notify){
       skyMaterial.uniforms.overcast.value=warm?0:1;
       skyMaterial.uniforms.skyHorizon.value.set(warm?'#e3ded0':'#e5e7e1');
       skyMaterial.uniforms.skyTop.value.set(warm?'#8eafc4':'#cad3d9');
-      hemi.color.set(warm?'#e3ebef':'#e4e9ef');hemi.groundColor.set(warm?'#928677':'#aea79a');
-      hemi.intensity=warm?1.08:1.95;scene.environmentIntensity=warm?.24:.43;
-      scene.fog.color.set(warm?'#c4c9bd':'#d3d8d5');scene.fog.density=warm?.014:.018;
+      hemi.color.set(warm?'#deecfa':'#e4e9ef');hemi.groundColor.set(warm?'#9a9187':'#aea79a');
+      hemi.intensity=warm?1.46:1.98;scene.environmentIntensity=warm?.31:.43;
+      scene.fog.color.set(warm?'#c9d1d2':'#d3d8d5');scene.fog.density=warm?.013:.018;
       daylight();K.invalidateShadow();
     }
     $('atmosphere').onchange=setDaylight;setDaylight();
+    // The old casements catch the tree, opposite walls and light sky at different angles.
+    // A single small courtyard probe is shared by all panes throughout the walk.
+    {
+      const target=new T.WebGLCubeRenderTarget(64,{type:T.UnsignedByteType});
+      const probe=new T.CubeCamera(.12,146,target);
+      probe.position.set(1.05,1.74,1.02);
+      K.windowGlass.visible=false;
+      try {
+        probe.update(renderer,scene);
+        const filter=new T.PMREMGenerator(renderer);
+        K.windowGlass.envMap=filter.fromCubemap(target.texture).texture;
+        K.windowGlass.envMapIntensity=1.12;
+        K.windowGlass.needsUpdate=true;
+        filter.dispose();
+      } finally {K.windowGlass.visible=true;target.dispose();}
+    }
     $('shotBtn').onclick=()=>{
       drawScene();canvas.toBlob(blob=>{if(!blob){toast('无法保存当前画面');return;}const url=URL.createObjectURL(blob),a=document.createElement('a');
         a.href=url;a.download='桂树下－'+$('placeTitle').textContent+'.png';a.click();setTimeout(()=>URL.revokeObjectURL(url),4000);toast('已导出当前画面');
